@@ -60,6 +60,7 @@ function toTrack(raw: Record<string, unknown>): UpstreamTrack | null {
   const performer = isRecord(raw.performer) ? raw.performer : undefined;
   const album = isRecord(raw.album) ? raw.album : undefined;
   const image = album && isRecord(album.image) ? album.image : undefined;
+
   return {
     upstreamId: String(id),
     title: title.trim(),
@@ -69,6 +70,10 @@ function toTrack(raw: Record<string, unknown>): UpstreamTrack | null {
     artworkURL: image && typeof image.large === 'string' ? image.large : undefined,
     format: typeof raw.maximum_bit_depth === 'number' ? 'flac' : undefined,
     audioQuality: typeof raw.maximum_bit_depth === 'number' ? (isHiRes(raw) ? 'HI-RES' : 'LOSSLESS') : undefined,
+    bitDepth: typeof raw.maximum_bit_depth === 'number' ? raw.maximum_bit_depth : undefined,
+    sampleRate: typeof raw.maximum_sampling_rate === 'number'
+      ? Math.round(raw.maximum_sampling_rate * 1000)
+      : undefined,
   };
 }
 
