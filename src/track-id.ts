@@ -1,13 +1,13 @@
 import type { UpstreamTrack } from "./types.js";
 
 /**
- * Track IDs look like `track_<base64url upstream id>_<16 char signature>`. The
- * signature is an HMAC-SHA-256 of the encoded id under SECRET_ID, so the server
- * only streams ids it issued. Uses Web Crypto, which Node and Workers both have.
+ * Track IDs look like `track_<base64url upstream id>_<16 char signature>`.
+ * The signature is an HMAC-SHA-256 of the encoded id under SECRET_ID.
+ * Uses Web Crypto, which Node and Workers both have.
  */
 
-export const PUBLIC_ID = /^track_[A-Za-z0-9_-]{10,120}$/;
-const ID_PATTERN = /^track_([A-Za-z0-9_-]+)_([A-Za-z0-9_-]{16})$/;
+export const PUBLIC_ID = /^track_[A-Za-z0-9_-]{10,1024}$/;
+const ID_PATTERN = /^track_([A-Za-z0-9_-]{1,1024})_([A-Za-z0-9_-]{16})$/;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -20,44 +20,80 @@ function toBase64Url(bytes: Uint8Array): string {
 }
 
 function fromBase64Url(value: string): Uint8Array {
-  const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const padded = value
+    .replaceAll("-", "+")
+    .replaceAll("_", "/")
+    .padEnd(Math.ceil(value.length / 4) * 4, "=");
+
   const binary = atob(padded);
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
 function hmacKey(secret: string): Promise<CryptoKey> {
   let key = keys.get(secret);
+
   if (!key) {
-    key = crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    key = crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+
     keys.set(secret, key);
   }
+
   return key;
 }
 
 async function sign(encoded: string, secret: string): Promise<string> {
   if (!secret) throw new Error("a signing secret is required");
-  const mac = await crypto.subtle.sign("HMAC", await hmacKey(secret), encoder.encode(encoded));
+
+  const mac = await crypto.subtle.sign(
+    "HMAC",
+    await hmacKey(secret),
+    encoder.encode(encoded),
+  );
+
   return toBase64Url(new Uint8Array(mac)).slice(0, 16);
 }
 
 /** Compares without exiting early on the first difference. */
 function safeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
+
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+
   return diff === 0;
 }
 
-export async function publicId(track: UpstreamTrack, secret: string): Promise<string> {
+export async function publicId(
+  track: UpstreamTrack,
+  secret: string,
+): Promise<string> {
   const encoded = toBase64Url(encoder.encode(track.upstreamId));
+
   return `track_${encoded}_${await sign(encoded, secret)}`;
 }
 
-export async function upstreamIdFromPublicId(id: string, secret: string): Promise<string | undefined> {
+export async function upstreamIdFromPublicId(
+  id: string,
+  secret: string,
+): Promise<string | undefined> {
   const match = ID_PATTERN.exec(id);
+
   if (!match) return undefined;
+
   const [, encoded, supplied] = match;
-  if (!safeEqual(supplied, await sign(encoded, secret))) return undefined;
+  const expected = await sign(encoded, secret);
+
+  if (!safeEqual(supplied, expected)) return undefined;
+
   try {
     return decoder.decode(fromBase64Url(encoded)).trim() || undefined;
   } catch {
