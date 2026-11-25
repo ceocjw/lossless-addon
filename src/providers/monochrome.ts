@@ -50,10 +50,13 @@ function toTrack(raw: Record<string, unknown>): UpstreamTrack | null {
   if ((typeof id !== 'number' && typeof id !== 'string') || typeof title !== 'string' || !title.trim()) return null;
   const artists = Array.isArray(raw.artistNames) ? raw.artistNames.filter((v): v is string => typeof v === 'string') : [];
   const duration = typeof raw.duration === 'number' ? Math.round(raw.duration / 1000) : undefined;
+
   return {
-    upstreamId: String(id), title: title.trim(), artist: artists.join(', ') || undefined,
+    upstreamId: String(id),
+    title: title.trim(),
+    artist: artists.join(', ') || undefined,
     artworkURL: typeof raw.artwork === 'string' ? raw.artwork : undefined,
-    duration, format: 'flac', audioQuality: 'LOSSLESS',
+    duration,
   };
 }
 
