@@ -30,6 +30,9 @@ export async function normalizeTrack(track: UpstreamTrack, secret: string): Prom
     artworkURL: absoluteUrl(track.artworkURL),
     format: formatLabel(track.format),
     audioQuality: tierLabel(track.audioQuality),
+    bitDepth: track.bitDepth,
+    sampleRate: track.sampleRate,
+    bitrate: track.bitrate,
   };
 }
 
