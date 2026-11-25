@@ -10,6 +10,9 @@ export interface UpstreamTrack {
   artworkURL?: string;
   format?: string;
   audioQuality?: string;
+  bitDepth?: number;
+  sampleRate?: number;
+  bitrate?: number;
 }
 
 export interface UpstreamStream {
