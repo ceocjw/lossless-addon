@@ -1,51 +1,95 @@
 import type { Provider, UpstreamStream, UpstreamTrack, Quality } from '../types.js';
 
-export interface Source { name: string; provider: Provider }
+export interface Source {
+  name: string;
+  provider: Provider;
+}
 
 export class RacingProvider implements Provider {
   constructor(private readonly sources: Source[]) {}
 
-  async search(query: string, quality: Quality, atmos: string): Promise<UpstreamTrack[]> {
-    return new Promise((resolve, reject) => {
-      let pending = this.sources.length;
-      let failures = 0;
-      let lastError: unknown;
-      if (pending === 0) return resolve([]);
-      for (const source of this.sources) {
-        source.provider.search(query, quality, atmos).then(tracks => {
-          if (tracks.length > 0) {
-            resolve(tracks.map(track => ({ ...track, upstreamId: `${source.name}:${track.upstreamId}` })));
-            return;
-          }
-          pending -= 1;
-          if (pending === 0) resolve([]);
-        }).catch(error => {
-          lastError = error;
-          failures += 1;
-          pending -= 1;
-          // Only an outage if every source failed; some empty answers are a plain "no results".
-          if (pending === 0) failures === this.sources.length ? reject(lastError) : resolve([]);
-        });
-      }
-    });
-  }
+  /**
+   * Search every source in parallel and collect all successful results.
+   * A failed source does not prevent results from other sources being returned.
+   */
+  async search(
+    query: string,
+    quality: Quality,
+    atmos: string,
+  ): Promise<UpstreamTrack[]> {
+    const results = await Promise.allSettled(
+      this.sources.map(async (source) => {
+        const tracks = await source.provider.search(query, quality, atmos);
 
-  async getStream(trackId: string, quality: Quality, atmos: string): Promise<UpstreamStream | null> {
-    const separator = trackId.indexOf(':');
-    const named = separator > 0 ? this.sources.find(candidate => candidate.name === trackId.slice(0, separator)) : undefined;
-    const upstreamId = named ? trackId.slice(separator + 1) : trackId;
+        return tracks.map((track) => ({
+          ...track,
+          upstreamId: `${source.name}:${track.upstreamId}`,
+        }));
+      }),
+    );
 
-    // The source that found the track goes first; if it has no stream (or is
-    // down) the rest are tried, since the same upstream id often resolves elsewhere.
-    const order = named ? [named, ...this.sources.filter(source => source !== named)] : this.sources;
-    for (const source of order) {
-      try {
-        const stream = await source.provider.getStream(upstreamId, quality, atmos);
-        if (stream) return stream;
-      } catch {
-        // Try the next source.
+    const tracks: UpstreamTrack[] = [];
+    let failures = 0;
+    let lastError: unknown;
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        tracks.push(...result.value);
+      } else {
+        failures++;
+        lastError = result.reason;
       }
     }
+
+    if (this.sources.length > 0 && failures === this.sources.length) {
+      throw lastError;
+    }
+
+    return tracks;
+  }
+
+  /**
+   * Resolve the track through the source that supplied its ID.
+   * Do not pass one provider's ID to another provider:
+   * their upstream track IDs are not interchangeable.
+   */
+  async getStream(
+    trackId: string,
+    quality: Quality,
+    atmos: string,
+  ): Promise<UpstreamStream | null> {
+    const separator = trackId.indexOf(':');
+
+    if (separator > 0) {
+      const sourceName = trackId.slice(0, separator);
+      const upstreamId = trackId.slice(separator + 1);
+
+      const source = this.sources.find(
+        (candidate) => candidate.name === sourceName,
+      );
+
+      if (!source || !upstreamId) {
+        return null;
+      }
+
+      return source.provider.getStream(upstreamId, quality, atmos);
+    }
+
+    // Compatibility path for an unprefixed ID.
+    for (const source of this.sources) {
+      try {
+        const stream = await source.provider.getStream(
+          trackId,
+          quality,
+          atmos,
+        );
+
+        if (stream) return stream;
+      } catch {
+        // Continue to the next source.
+      }
+    }
+
     return null;
   }
 }
